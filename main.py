@@ -5,23 +5,22 @@ from collections import defaultdict, deque
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
 
 EMAIL = "23f1000212@ds.study.iitm.ac.in"
+
+RATE_LIMIT = 12
+WINDOW = 10
 
 ALLOWED_ORIGINS = [
     "https://app-ah3n9p.example.com",
     "https://exam.sanand.workers.dev",
 ]
 
-RATE_LIMIT = 12
-WINDOW = 10
-
 app = FastAPI(title="Middleware Stack API")
 
-# ---------------------------------------------------
+# ----------------------------------------------------
 # CORS
-# ---------------------------------------------------
+# ----------------------------------------------------
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,76 +30,79 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------
-# Rate Limit Storage
-# ---------------------------------------------------
+# ----------------------------------------------------
+# Rate limit storage
+# ----------------------------------------------------
 
 client_buckets = defaultdict(deque)
 
-# ---------------------------------------------------
+# ----------------------------------------------------
 # Middleware
-# ---------------------------------------------------
+# ----------------------------------------------------
 
-class RequestMiddleware(BaseHTTPMiddleware):
+@app.middleware("http")
+async def middleware(request: Request, call_next):
 
-    async def dispatch(self, request: Request, call_next):
+    # -------------------------------
+    # Request ID
+    # -------------------------------
 
-        # ---------------------------
-        # Request ID
-        # ---------------------------
+    request_id = request.headers.get("X-Request-ID")
 
-        request_id = request.headers.get("X-Request-ID")
+    if not request_id:
+        request_id = str(uuid.uuid4())
 
-        if not request_id:
-            request_id = str(uuid.uuid4())
+    request.state.request_id = request_id
 
-        request.state.request_id = request_id
+    # -------------------------------
+    # Skip OPTIONS
+    # -------------------------------
 
-        # ---------------------------
-        # Rate Limiter
-        # ---------------------------
+    if request.method != "OPTIONS":
 
-        if request.method != "OPTIONS":
+        client_id = request.headers.get(
+            "X-Client-Id",
+            "default"
+        )
 
-            client_id = request.headers.get(
-                "X-Client-Id",
-                "default"
+        now = time.time()
+
+        bucket = client_buckets[client_id]
+
+        while bucket and now - bucket[0] >= WINDOW:
+            bucket.popleft()
+
+        if len(bucket) >= RATE_LIMIT:
+
+            response = JSONResponse(
+                status_code=429,
+                content={
+                    "detail": "Rate limit exceeded"
+                }
             )
 
-            now = time.time()
+            response.headers["Retry-After"] = "10"
+            response.headers["X-Request-ID"] = request_id
 
-            bucket = client_buckets[client_id]
+            return response
 
-            while bucket and now - bucket[0] >= WINDOW:
-                bucket.popleft()
+        bucket.append(now)
 
-            if len(bucket) >= RATE_LIMIT:
+    # -------------------------------
+    # Continue request
+    # -------------------------------
 
-                response = JSONResponse(
-                    status_code=429,
-                    content={
-                        "detail": "Rate limit exceeded"
-                    }
-                )
+    response = await call_next(request)
 
-                response.headers["X-Request-ID"] = request_id
+    # IMPORTANT:
+    # Always echo request id back
+    response.headers["X-Request-ID"] = request_id
 
-                return response
+    return response
 
-            bucket.append(now)
-
-        response = await call_next(request)
-
-        response.headers["X-Request-ID"] = request_id
-
-        return response
-
-
-app.add_middleware(RequestMiddleware)
-
-# ---------------------------------------------------
-# Home
-# ---------------------------------------------------
+# ----------------------------------------------------
+# Root
+# ----------------------------------------------------
 
 @app.get("/")
 def home():
@@ -109,9 +111,9 @@ def home():
         "message": "Middleware Stack API Running"
     }
 
-# ---------------------------------------------------
+# ----------------------------------------------------
 # Ping
-# ---------------------------------------------------
+# ----------------------------------------------------
 
 @app.get("/ping")
 def ping(request: Request):
