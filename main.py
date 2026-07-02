@@ -48,7 +48,13 @@ async def middleware(request: Request, call_next):
     # Request Context
     # -------------------------
 
-    request_id = request.headers.get("x-request-id")
+    request_id = request.headers.get("X-Request-ID")
+
+    if request_id is None:
+        request_id = request.headers.get("x-request-id")
+
+    if request_id is None:
+        request_id = str(uuid.uuid4())
 
     if not request_id:
         request_id = str(uuid.uuid4())
