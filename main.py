@@ -1,73 +1,114 @@
+import time
+import uuid
+from collections import defaultdict
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-import uuid
-import time
-from collections import defaultdict
 
 app = FastAPI()
 
-# ==========================================
-# 🛑 EXACT VALUES BASED ON YOUR INPUT
-MY_EMAIL = "23f1000212@ds.study.iitm.ac.in" 
-EXAM_PAGE_ORIGIN = "https://exam.sanand.workers.dev"
-# ==========================================
+EMAIL = "23f1000212@ds.study.iitm.ac.in"
 
-ALLOWED_ORIGINS = [
-    "https://app-ah3n9p.example.com",
-    EXAM_PAGE_ORIGIN
-]
+RATE_LIMIT = 12
+WINDOW = 10
 
-# --- Middleware 2: CORS ---
+client_hits = defaultdict(list)
+
+# ----------------------------
+# CORS
+# ----------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_origins=[
+        "https://app-ah3n9p.example.com",
+        "https://exam.sanand.workers.dev",
+    ],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Request-ID"] # Allows the grader to read the header
+    expose_headers=["X-Request-ID", "Retry-After"],
 )
 
-rate_limit_db = defaultdict(list)
-RATE_LIMIT_MAX = 12
-RATE_LIMIT_WINDOW_SEC = 10
-
-# --- Middleware 1 & 3: Context & Rate Limiting ---
+# ----------------------------
+# Request Context Middleware
+# ----------------------------
 @app.middleware("http")
-async def custom_stack_middleware(request: Request, call_next):
-    # 1. Rate Limiting (Ignore CORS Preflights)
-    if request.method != "OPTIONS":
-        client_id = request.headers.get("X-Client-Id")
-        if client_id:
-            current_time = time.time()
-            active_timestamps = [
-                ts for ts in rate_limit_db[client_id] 
-                if current_time - ts < RATE_LIMIT_WINDOW_SEC
-            ]
-            if len(active_timestamps) >= RATE_LIMIT_MAX:
-                rate_limit_db[client_id] = active_timestamps
-                return JSONResponse(status_code=429, content={"detail": "Too Many Requests"})
-            active_timestamps.append(current_time)
-            rate_limit_db[client_id] = active_timestamps
+async def request_context(request: Request, call_next):
 
-    # 2. Request Context Propagation
     request_id = request.headers.get("X-Request-ID")
+
     if not request_id:
         request_id = str(uuid.uuid4())
-    
+
     request.state.request_id = request_id
 
-    # Execute endpoint
     response = await call_next(request)
 
-    # 3. Echo the ID in the response headers
     response.headers["X-Request-ID"] = request_id
+
     return response
 
-# --- Endpoint ---
+
+# ----------------------------
+# Rate Limit Middleware
+# ----------------------------
+@app.middleware("http")
+async def rate_limit(request: Request, call_next):
+
+    # Skip CORS preflight
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    client = request.headers.get("X-Client-Id", "default")
+
+    now = time.time()
+
+    hits = [
+        t
+        for t in client_hits[client]
+        if now - t < WINDOW
+    ]
+
+    client_hits[client] = hits
+
+    if len(hits) >= RATE_LIMIT:
+
+        retry = max(
+            1,
+            int(WINDOW - (now - hits[0])) + 1
+        )
+
+        response = JSONResponse(
+            status_code=429,
+            content={
+                "detail": "Rate limit exceeded"
+            },
+        )
+
+        response.headers["Retry-After"] = str(retry)
+        response.headers["X-Request-ID"] = getattr(
+            request.state,
+            "request_id",
+            str(uuid.uuid4())
+        )
+
+        return response
+
+    hits.append(now)
+
+    client_hits[client] = hits
+
+    return await call_next(request)
+
+
+# ----------------------------
+# Ping Endpoint
+# ----------------------------
 @app.get("/ping")
 async def ping(request: Request):
+
     return {
-        "email": MY_EMAIL,
-        "request_id": request.state.request_id
+        "email": EMAIL,
+        "request_id": request.state.request_id,
     }
