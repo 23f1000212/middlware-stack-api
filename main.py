@@ -20,10 +20,7 @@ client_hits = defaultdict(list)
 # ----------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://app-ah3n9p.example.com",
-        "https://exam.sanand.workers.dev",
-    ],
+    allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["GET","OPTIONS"],
     allow_headers=["*"],
