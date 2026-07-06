@@ -1,96 +1,72 @@
-import time
-import uuid
-from collections import defaultdict, deque
-
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+import uuid
+import time
+
+app = FastAPI()
 
 EMAIL = "23f1000212@ds.study.iitm.ac.in"
 
 ALLOWED_ORIGINS = [
     "https://app-ah3n9p.example.com",
-    "https://exam.sanand.workers.dev",
+    "https://exam.sanand.workers.dev"
 ]
 
 RATE_LIMIT = 12
 WINDOW = 10
 
-app = FastAPI(title="Middleware Stack API")
-
-# ----------------------------------------------------
-# CORS
-# ----------------------------------------------------
+rate_limit_store = {}
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Request-ID"],
+    expose_headers=["X-Request-ID"]
 )
 
-# ----------------------------------------------------
-# Rate Limit Storage
-# ----------------------------------------------------
-
-client_buckets = defaultdict(deque)
-
-# ----------------------------------------------------
-# Middleware
-# ----------------------------------------------------
 
 @app.middleware("http")
 async def middleware(request: Request, call_next):
 
-    # -------------------------
-    # Request Context
-    # -------------------------
+    # -----------------------
+    # Request ID
+    # -----------------------
 
     request_id = request.headers.get("X-Request-ID")
-
-    if request_id is None:
-        request_id = request.headers.get("x-request-id")
-
-    if request_id is None:
-        request_id = str(uuid.uuid4())
 
     if not request_id:
         request_id = str(uuid.uuid4())
 
     request.state.request_id = request_id
 
-    # -------------------------
-    # Rate Limiter
-    # -------------------------
+    # -----------------------
+    # Rate Limiting
+    # -----------------------
 
-    if request.method != "OPTIONS":
+    if request.url.path == "/ping":
 
-        client_id = request.headers.get("x-client-id", "default")
+        client = request.headers.get("X-Client-Id", "default")
 
         now = time.time()
 
-        bucket = client_buckets[client_id]
+        history = rate_limit_store.get(client, [])
 
-        while bucket and now - bucket[0] >= WINDOW:
-            bucket.popleft()
+        history = [t for t in history if now - t < WINDOW]
 
-        if len(bucket) >= RATE_LIMIT:
-
-            response = JSONResponse(
+        if len(history) >= RATE_LIMIT:
+            return Response(
                 status_code=429,
-                content={
-                    "detail": "Rate limit exceeded"
-                },
+                headers={
+                    "Retry-After": str(WINDOW),
+                    "X-Request-ID": request_id
+                }
             )
 
-            response.headers["Retry-After"] = "10"
-            response.headers["X-Request-ID"] = request_id
+        history.append(now)
 
-            return response
-
-        bucket.append(now)
+        rate_limit_store[client] = history
 
     response = await call_next(request)
 
@@ -98,23 +74,19 @@ async def middleware(request: Request, call_next):
 
     return response
 
-# ----------------------------------------------------
-# Root
-# ----------------------------------------------------
-
-@app.get("/")
-def root():
-    return {
-        "message": "Middleware Stack API Running"
-    }
-
-# ----------------------------------------------------
-# Ping
-# ----------------------------------------------------
 
 @app.get("/ping")
-def ping(request: Request):
+async def ping(request: Request):
+
     return {
         "email": EMAIL,
         "request_id": request.state.request_id
+    }
+
+
+@app.get("/")
+async def home():
+
+    return {
+        "status": "running"
     }
