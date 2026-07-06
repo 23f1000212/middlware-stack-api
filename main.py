@@ -105,7 +105,8 @@ async def request_context(request: Request, call_next):
 # ----------------------------
 @app.get("/ping")
 async def ping(request: Request):
+    
     return {
-        "email": "23f1000212@ds.study.iitm.ac.in",
+        "email": EMAIL,
         "request_id": request.state.request_id,
     }
