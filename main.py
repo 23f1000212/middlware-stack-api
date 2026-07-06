@@ -9,81 +9,82 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI()
 
 # ==========================================
-EMAIL = "23f1000212@ds.study.iitm.ac.in"
-EXAM_PAGE_ORIGIN = "https://exam.sanand.workers.dev"
-ASSIGNED_ORIGIN = "https://app-ah3n9p.example.com"
+# CONSTANTS
 # ==========================================
+EMAIL = "23f1000212@ds.study.iitm.ac.in"
+ASSIGNED_ORIGIN = "https://app-ah3n9p.example.com"
+EXAM_PAGE_ORIGIN = "https://exam.sanand.workers.dev"
 
-# STRICT CORS (No wildcards per instructions)
-ALLOWED_ORIGINS = [
-    ASSIGNED_ORIGIN,
-    EXAM_PAGE_ORIGIN
-]
-
+# ==========================================
+# MIDDLEWARE 2: CORS POLICY
+# ==========================================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=[ASSIGNED_ORIGIN, EXAM_PAGE_ORIGIN], # No wildcards (*)
     allow_credentials=True,
-    allow_methods=["GET", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Request-ID", "Retry-After"]
+    expose_headers=["X-Request-ID"] # Required for the grader to read the custom header
 )
 
+# ==========================================
+# MIDDLEWARE 1 & 3: CONTEXT & RATE LIMITER
+# ==========================================
+client_hits = defaultdict(list)
 RATE_LIMIT = 12
 WINDOW = 10
-client_hits = defaultdict(list)
 
-# ----------------------------
-# Combined Middleware
-# ----------------------------
 @app.middleware("http")
-async def combined_stack_middleware(request: Request, call_next):
-    # 1. Ensure Request ID exists immediately
-    request_id = request.headers.get("X-Request-ID")
-    if not request_id:
-        request_id = str(uuid.uuid4())
+async def custom_stack_middleware(request: Request, call_next):
+    # --- STEP 1: Request Context ---
+    # Always extract or generate the X-Request-ID first
+    req_id = request.headers.get("X-Request-ID")
+    if not req_id:
+        req_id = str(uuid.uuid4())
     
-    request.state.request_id = request_id
+    # Store it in the request state for the endpoint to use
+    request.state.request_id = req_id
 
-    # 2. Rate Limiting (Ignore CORS preflights)
+    # --- STEP 2: Rate Limiting ---
+    # We explicitly ignore OPTIONS requests so CORS preflights always pass
     if request.method != "OPTIONS":
         client_id = request.headers.get("X-Client-Id")
         if client_id:
             now = time.time()
-            # Filter hits inside the 10s window
+            
+            # Clean up old timestamps outside the 10-second window
             hits = [t for t in client_hits[client_id] if now - t < WINDOW]
             
-            # Check limit
+            # Check if they have hit the 12 request limit
             if len(hits) >= RATE_LIMIT:
-                client_hits[client_id] = hits
-                retry = max(1, int(WINDOW - (now - hits[0])) + 1)
+                client_hits[client_id] = hits # Update state before rejecting
                 
-                # Early return for 429
+                # Return 429 early, but make sure to attach the Request ID!
                 response = JSONResponse(
-                    status_code=429,
+                    status_code=429, 
                     content={"detail": "Too Many Requests"}
                 )
-                response.headers["Retry-After"] = str(retry)
-                response.headers["X-Request-ID"] = request_id  # Attach header to early exit
+                response.headers["X-Request-ID"] = req_id
                 return response
             
-            # Record hit
+            # Otherwise, record this new request timestamp
             hits.append(now)
             client_hits[client_id] = hits
 
-    # 3. Proceed to endpoint
+    # --- STEP 3: Execute the Endpoint ---
     response = await call_next(request)
-
-    # 4. Attach header to normal exit
-    response.headers["X-Request-ID"] = request_id
+    
+    # --- STEP 4: Outbound Headers ---
+    # Attach the Request ID to the successful response
+    response.headers["X-Request-ID"] = req_id
     return response
 
-# ----------------------------
-# Ping Endpoint
-# ----------------------------
+# ==========================================
+# ENDPOINT
+# ==========================================
 @app.get("/ping")
 async def ping(request: Request):
     return {
         "email": EMAIL,
-        "request_id": request.state.request_id,
+        "request_id": request.state.request_id
     }
