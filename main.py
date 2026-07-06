@@ -20,13 +20,14 @@ EXAM_PAGE_ORIGIN = "https://exam.sanand.workers.dev"
 # ==========================================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[ASSIGNED_ORIGIN, EXAM_PAGE_ORIGIN], # No wildcards (*)
-    allow_credentials=True,
+    allow_origins=[
+        ALLOWED_ORIGIN,
+        "https://exam.sanand.workers.dev",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Request-ID"] # Required for the grader to read the custom header
+    expose_headers=["X-Request-ID", "Retry-After"],
 )
-
 # ==========================================
 # MIDDLEWARE 1 & 3: CONTEXT & RATE LIMITER
 # ==========================================
