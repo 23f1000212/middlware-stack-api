@@ -75,57 +75,43 @@ async def request_context(request: Request, call_next):
 @app.middleware("http")
 async def rate_limiter(request: Request, call_next):
 
-    # Never rate limit CORS preflight
+    # Never rate-limit OPTIONS
     if request.method == "OPTIONS":
         return await call_next(request)
 
     client_id = request.headers.get("X-Client-Id")
 
-    # Only rate-limit if client id is supplied
-    if client_id:
+    # If no client id, don't rate-limit
+    if not client_id:
+        return await call_next(request)
 
-        now = time.time()
+    now = time.time()
 
-        hits = [
-            t
-            for t in client_hits[client_id]
-            if now - t < WINDOW
-        ]
+    hits = [t for t in client_hits[client_id] if now - t < WINDOW]
+    client_hits[client_id] = hits
 
-        client_hits[client_id] = hits
+    if len(hits) >= RATE_LIMIT:
 
-        if len(hits) >= RATE_LIMIT:
+        retry_after = max(
+            1,
+            int(WINDOW - (now - hits[0])) + 1
+        )
 
-            retry_after = max(
-                1,
-                int(WINDOW - (now - hits[0])) + 1
-            )
+        response = JSONResponse(
+            status_code=429,
+            content={"detail": "Too Many Requests"},
+        )
 
-            response = JSONResponse(
-                status_code=429,
-                content={
-                    "detail": "Too Many Requests"
-                }
-            )
+        response.headers["Retry-After"] = str(retry_after)
 
-            response.headers["Retry-After"] = str(retry_after)
+        response.headers["X-Request-ID"] = request.state.request_id
 
-            response.headers["X-Request-ID"] = getattr(
-                request.state,
-                "request_id",
-                str(uuid.uuid4())
-            )
+        return response
 
-            return response
+    hits.append(now)
+    client_hits[client_id] = hits
 
-        hits.append(now)
-        client_hits[client_id] = hits
-
-    response = await call_next(request)
-
-    return response
-
-
+    return await call_next(request)
 # ==========================================================
 # Endpoint
 # ==========================================================
