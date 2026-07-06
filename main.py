@@ -4,14 +4,14 @@ import uuid
 from collections import defaultdict
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
-# =====================================================
+# ==========================================================
 # Configuration
-# =====================================================
+# ==========================================================
 
 EMAIL = "23f1000212@ds.study.iitm.ac.in"
 
@@ -28,9 +28,9 @@ WINDOW = 10  # seconds
 
 client_hits = defaultdict(list)
 
-# =====================================================
-# CORS Middleware
-# =====================================================
+# ==========================================================
+# CORS
+# ==========================================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -47,9 +47,9 @@ app.add_middleware(
     ],
 )
 
-# =====================================================
+# ==========================================================
 # Request Context Middleware
-# =====================================================
+# ==========================================================
 
 @app.middleware("http")
 async def request_context(request: Request, call_next):
@@ -68,67 +68,83 @@ async def request_context(request: Request, call_next):
     return response
 
 
-# =====================================================
-# Rate Limiting Middleware
-# =====================================================
+# ==========================================================
+# Rate Limiter Middleware
+# ==========================================================
 
 @app.middleware("http")
-async def rate_limit(request: Request, call_next):
+async def rate_limiter(request: Request, call_next):
 
-    # Skip OPTIONS requests (CORS preflight)
+    # Never rate limit CORS preflight
     if request.method == "OPTIONS":
         return await call_next(request)
 
-    client_id = request.headers.get("X-Client-Id", "anonymous")
+    client_id = request.headers.get("X-Client-Id")
 
-    now = time.time()
+    # Only rate-limit if client id is supplied
+    if client_id:
 
-    hits = [
-        t
-        for t in client_hits[client_id]
-        if now - t < WINDOW
-    ]
+        now = time.time()
 
-    client_hits[client_id] = hits
+        hits = [
+            t
+            for t in client_hits[client_id]
+            if now - t < WINDOW
+        ]
 
-    if len(hits) >= RATE_LIMIT:
+        client_hits[client_id] = hits
 
-        retry_after = max(
-            1,
-            int(WINDOW - (now - hits[0])) + 1
-        )
+        if len(hits) >= RATE_LIMIT:
 
-        response = JSONResponse(
-            status_code=429,
-            content={
-                "detail": "Too Many Requests"
-            }
-        )
+            retry_after = max(
+                1,
+                int(WINDOW - (now - hits[0])) + 1
+            )
 
-        response.headers["Retry-After"] = str(retry_after)
+            response = JSONResponse(
+                status_code=429,
+                content={
+                    "detail": "Too Many Requests"
+                }
+            )
 
-        response.headers["X-Request-ID"] = getattr(
-            request.state,
-            "request_id",
-            str(uuid.uuid4())
-        )
+            response.headers["Retry-After"] = str(retry_after)
 
-        return response
+            response.headers["X-Request-ID"] = getattr(
+                request.state,
+                "request_id",
+                str(uuid.uuid4())
+            )
 
-    hits.append(now)
-    client_hits[client_id] = hits
+            return response
 
-    return await call_next(request)
+        hits.append(now)
+        client_hits[client_id] = hits
+
+    response = await call_next(request)
+
+    return response
 
 
-# =====================================================
-# Ping Endpoint
-# =====================================================
+# ==========================================================
+# Endpoint
+# ==========================================================
 
 @app.get("/ping")
 async def ping(request: Request):
 
     return {
         "email": EMAIL,
-        "request_id": request.state.request_id
+        "request_id": request.state.request_id,
+    }
+
+
+# ==========================================================
+# Root Endpoint (optional)
+# ==========================================================
+
+@app.get("/")
+async def root():
+    return {
+        "message": "Middleware Stack API Running"
     }
