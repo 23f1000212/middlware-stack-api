@@ -1,5 +1,6 @@
 import time
 import uuid
+import os 
 from collections import defaultdict
 
 from fastapi import FastAPI, Request
@@ -12,8 +13,17 @@ app = FastAPI()
 # CONSTANTS
 # ==========================================
 EMAIL = "23f1000212@ds.study.iitm.ac.in"
-ASSIGNED_ORIGIN = "https://app-ah3n9p.example.com"
-EXAM_PAGE_ORIGIN = "https://exam.sanand.workers.dev"
+
+ALLOWED_ORIGIN = os.getenv(
+    "Q10_ALLOWED_ORIGIN",
+    "https://app-ah3n9p.example.com"
+)
+
+RATE_LIMIT = int(
+    os.getenv("Q10_RATE_LIMIT", "12")
+)
+
+WINDOW = 10
 
 # ==========================================
 # MIDDLEWARE 2: CORS POLICY
