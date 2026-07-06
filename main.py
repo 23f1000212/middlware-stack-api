@@ -31,26 +31,6 @@ app.add_middleware(
 )
 
 # ----------------------------
-# Request Context Middleware
-# ----------------------------
-@app.middleware("http")
-async def request_context(request: Request, call_next):
-
-    request_id = request.headers.get("X-Request-ID")
-
-    if not request_id:
-        request_id = str(uuid.uuid4())
-
-    request.state.request_id = request_id
-
-    response = await call_next(request)
-
-    response.headers["X-Request-ID"] = request_id
-
-    return response
-
-
-# ----------------------------
 # Rate Limit Middleware
 # ----------------------------
 @app.middleware("http")
@@ -100,6 +80,27 @@ async def rate_limit(request: Request, call_next):
     client_hits[client] = hits
 
     return await call_next(request)
+
+
+
+# ----------------------------
+# Request Context Middleware
+# ----------------------------
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+
+    request_id = request.headers.get("X-Request-ID")
+
+    if not request_id:
+        request_id = str(uuid.uuid4())
+
+    request.state.request_id = request_id
+
+    response = await call_next(request)
+
+    response.headers["X-Request-ID"] = request_id
+
+    return response
 
 
 # ----------------------------
