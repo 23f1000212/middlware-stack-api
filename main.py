@@ -20,6 +20,7 @@ EXAM_PAGE_ORIGIN = "https://exam.sanand.workers.dev"
 # --- Middleware 2: CORS ---
 # CORSMiddleware handles OPTIONS preflights and ACAO headers. 
 # It strictly blocks ACAO headers for unlisted origins (no wildcards).
+# --- Middleware 2: CORS ---
 ALLOWED_ORIGINS = [
     "https://app-ah3n9p.example.com",
     EXAM_PAGE_ORIGIN
@@ -31,6 +32,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"]  # 👈 Add this line!
 )
 
 # In-memory database for Rate Limiting: { "client_id": [timestamp1, timestamp2, ...] }
