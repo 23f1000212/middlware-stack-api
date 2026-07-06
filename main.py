@@ -7,25 +7,30 @@ app = FastAPI()
 
 EMAIL = "23f1000212@ds.study.iitm.ac.in"
 
-ALLOWED_ORIGINS = [
+ALLOWED_ORIGINS = {
     "https://app-ah3n9p.example.com",
     "https://exam.sanand.workers.dev"
-]
+}
 
-RATE_LIMIT = 12
-WINDOW = 10
+@app.middleware("http")
+async def cors_and_context(request: Request, call_next):
 
-rate_limit_store = {}
+    if request.method == "OPTIONS":
+        response = Response(status_code=204)
+    else:
+        response = await call_next(request)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["X-Request-ID"]
-)
+    origin = request.headers.get("Origin")
 
+    if origin:
+        if origin in ALLOWED_ORIGINS or "exam.sanand.workers.dev" in origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Expose-Headers"] = "X-Request-ID"
+
+    return response
 
 @app.middleware("http")
 async def middleware(request: Request, call_next):
