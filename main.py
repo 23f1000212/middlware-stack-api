@@ -1,97 +1,88 @@
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uuid
 import time
+from collections import defaultdict
 
 app = FastAPI()
 
-EMAIL = "23f1000212@ds.study.iitm.ac.in"
+# ==========================================
+# 🛑 IMPORTANT: UPDATE THESE TWO VARIABLES
+# ==========================================
+MY_EMAIL = "23f1000212@ds.study.ac.in" # 1. Put your logged-in email here
 
-ALLOWED_ORIGINS = {
+# 2. Add the exact base URL of your exam portal (e.g., "https://exam.domain.com")
+# If you don't add this, your browser will block the exam page's verification requests.
+EXAM_PAGE_ORIGIN = "https://exam.sanand.workers.dev/tds-2026-05-ga2" 
+# ==========================================
+
+# --- Middleware 2: CORS ---
+# CORSMiddleware handles OPTIONS preflights and ACAO headers. 
+# It strictly blocks ACAO headers for unlisted origins (no wildcards).
+ALLOWED_ORIGINS = [
     "https://app-ah3n9p.example.com",
-    "https://exam.sanand.workers.dev"
-}
+    EXAM_PAGE_ORIGIN
+]
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# In-memory database for Rate Limiting: { "client_id": [timestamp1, timestamp2, ...] }
+rate_limit_db = defaultdict(list)
+RATE_LIMIT_MAX = 12
+RATE_LIMIT_WINDOW_SEC = 10
+
+# --- Middleware 1 & 3: Rate Limiting & Request Context ---
 @app.middleware("http")
-async def cors_and_context(request: Request, call_next):
+async def custom_stack_middleware(request: Request, call_next):
+    # 1. RATE LIMITING (Middleware 3)
+    # We ignore OPTIONS requests as they are CORS preflights.
+    if request.method != "OPTIONS":
+        client_id = request.headers.get("X-Client-Id")
+        if client_id:
+            current_time = time.time()
+            
+            # Filter timestamps to only keep ones within the last 10 seconds
+            active_timestamps = [
+                ts for ts in rate_limit_db[client_id] 
+                if current_time - ts < RATE_LIMIT_WINDOW_SEC
+            ]
+            
+            # If they hit 12 requests, block with HTTP 429
+            if len(active_timestamps) >= RATE_LIMIT_MAX:
+                rate_limit_db[client_id] = active_timestamps # Keep state clean
+                return JSONResponse(status_code=429, content={"detail": "Too Many Requests"})
+            
+            # Otherwise, record this request's timestamp
+            active_timestamps.append(current_time)
+            rate_limit_db[client_id] = active_timestamps
 
-    if request.method == "OPTIONS":
-        response = Response(status_code=204)
-    else:
-        response = await call_next(request)
-
-    origin = request.headers.get("Origin")
-
-    if origin:
-        if origin in ALLOWED_ORIGINS or "exam.sanand.workers.dev" in origin:
-            response.headers["Access-Control-Allow-Origin"] = origin
-
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "*"
-    response.headers["Access-Control-Expose-Headers"] = "X-Request-ID"
-
-    return response
-
-@app.middleware("http")
-async def middleware(request: Request, call_next):
-
-    # -----------------------
-    # Request ID
-    # -----------------------
-
+    # 2. REQUEST CONTEXT (Middleware 1)
+    # Extract existing ID or generate a new UUID4
     request_id = request.headers.get("X-Request-ID")
-
     if not request_id:
         request_id = str(uuid.uuid4())
 
+    # Store it in request.state so the route endpoint can access it
     request.state.request_id = request_id
 
-    # -----------------------
-    # Rate Limiting
-    # -----------------------
-
-    if request.url.path == "/ping":
-
-        client = request.headers.get("X-Client-Id", "default")
-
-        now = time.time()
-
-        history = rate_limit_store.get(client, [])
-
-        history = [t for t in history if now - t < WINDOW]
-
-        if len(history) >= RATE_LIMIT:
-            return Response(
-                status_code=429,
-                headers={
-                    "Retry-After": str(WINDOW),
-                    "X-Request-ID": request_id
-                }
-            )
-
-        history.append(now)
-
-        rate_limit_store[client] = history
-
+    # Execute the request (hits the /ping endpoint)
     response = await call_next(request)
 
+    # Attach the request ID to the outgoing response header
     response.headers["X-Request-ID"] = request_id
-
     return response
 
-
+# --- Endpoint ---
 @app.get("/ping")
 async def ping(request: Request):
-
     return {
-        "email": EMAIL,
+        "email": MY_EMAIL,
         "request_id": request.state.request_id
-    }
-
-
-@app.get("/")
-async def home():
-
-    return {
-        "status": "running"
     }
