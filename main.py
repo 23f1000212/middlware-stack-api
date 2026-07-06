@@ -25,7 +25,7 @@ app.add_middleware(
         "https://exam.sanand.workers.dev",
     ],
     allow_credentials=False,
-    allow_methods=["*"],
+    allow_methods=["GET","OPTIONS"],
     allow_headers=["*"],
     expose_headers=["X-Request-ID", "Retry-After"],
 )
