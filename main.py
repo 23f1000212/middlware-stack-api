@@ -9,9 +9,9 @@ from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
-# ==========================================================
+# ======================================================
 # Configuration
-# ==========================================================
+# ======================================================
 
 EMAIL = "23f1000212@ds.study.iitm.ac.in"
 
@@ -21,16 +21,19 @@ ALLOWED_ORIGIN = os.getenv(
 )
 
 RATE_LIMIT = int(
-    os.getenv("Q10_RATE_LIMIT", "12")
+    os.getenv(
+        "Q10_RATE_LIMIT",
+        "12"
+    )
 )
 
 WINDOW = 10  # seconds
 
 client_hits = defaultdict(list)
 
-# ==========================================================
+# ======================================================
 # CORS
-# ==========================================================
+# ======================================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -47,12 +50,16 @@ app.add_middleware(
     ],
 )
 
-# ==========================================================
-# Request Context Middleware
-# ==========================================================
+# ======================================================
+# Middleware
+# ======================================================
 
 @app.middleware("http")
-async def request_context(request: Request, call_next):
+async def middleware_stack(request: Request, call_next):
+
+    # -------------------------
+    # Request Context
+    # -------------------------
 
     request_id = request.headers.get("X-Request-ID")
 
@@ -61,6 +68,52 @@ async def request_context(request: Request, call_next):
 
     request.state.request_id = request_id
 
+    # -------------------------
+    # Skip rate limiting for OPTIONS
+    # -------------------------
+
+    if request.method != "OPTIONS":
+
+        client_id = request.headers.get("X-Client-Id")
+
+        if client_id:
+
+            now = time.time()
+
+            hits = [
+                t
+                for t in client_hits[client_id]
+                if now - t < WINDOW
+            ]
+
+            client_hits[client_id] = hits
+
+            if len(hits) >= RATE_LIMIT:
+
+                retry_after = max(
+                    1,
+                    int(WINDOW - (now - hits[0])) + 1
+                )
+
+                response = JSONResponse(
+                    status_code=429,
+                    content={
+                        "detail": "Too Many Requests"
+                    }
+                )
+
+                response.headers["Retry-After"] = str(retry_after)
+                response.headers["X-Request-ID"] = request_id
+
+                return response
+
+            hits.append(now)
+            client_hits[client_id] = hits
+
+    # -------------------------
+    # Continue request
+    # -------------------------
+
     response = await call_next(request)
 
     response.headers["X-Request-ID"] = request_id
@@ -68,69 +121,20 @@ async def request_context(request: Request, call_next):
     return response
 
 
-# ==========================================================
-# Rate Limiter Middleware
-# ==========================================================
-
-@app.middleware("http")
-async def rate_limiter(request: Request, call_next):
-
-    # Never rate-limit OPTIONS
-    if request.method == "OPTIONS":
-        return await call_next(request)
-
-    client_id = request.headers.get("X-Client-Id")
-
-    # If no client id, don't rate-limit
-    if not client_id:
-        return await call_next(request)
-
-    now = time.time()
-
-    hits = [t for t in client_hits[client_id] if now - t < WINDOW]
-    client_hits[client_id] = hits
-
-    if len(hits) >= RATE_LIMIT:
-
-        retry_after = max(
-            1,
-            int(WINDOW - (now - hits[0])) + 1
-        )
-
-        response = JSONResponse(
-            status_code=429,
-            content={"detail": "Too Many Requests"},
-        )
-
-        response.headers["Retry-After"] = str(retry_after)
-
-        response.headers["X-Request-ID"] = request.state.request_id
-
-        return response
-
-    hits.append(now)
-    client_hits[client_id] = hits
-
-    return await call_next(request)
-# ==========================================================
-# Endpoint
-# ==========================================================
-
-@app.get("/ping")
-async def ping(request: Request):
-
-    return {
-        "email": EMAIL,
-        "request_id": request.state.request_id,
-    }
-
-
-# ==========================================================
-# Root Endpoint (optional)
-# ==========================================================
+# ======================================================
+# Routes
+# ======================================================
 
 @app.get("/")
 async def root():
     return {
-        "message": "Middleware Stack API Running"
+        "status": "running"
+    }
+
+
+@app.get("/ping")
+async def ping(request: Request):
+    return {
+        "email": EMAIL,
+        "request_id": request.state.request_id
     }
