@@ -10,7 +10,7 @@ app = FastAPI()
 # ==========================================
 # 🛑 IMPORTANT: UPDATE THESE TWO VARIABLES
 # ==========================================
-MY_EMAIL = "23f1000212@ds.study.ac.in" # 1. Put your logged-in email here
+MY_EMAIL = "23f1000212@ds.study.iitm.ac.in" # 1. Put your logged-in email here
 
 # 2. Add the exact base URL of your exam portal (e.g., "https://exam.domain.com")
 # If you don't add this, your browser will block the exam page's verification requests.
